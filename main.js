@@ -2,12 +2,17 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const url = require('url');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 
 const launcher = new Client();
 let mainWindow;
 
-const instancesFile = path.join(__dirname, 'instances.json');
+// Use app.getPath('userData') so it writes safely in portable/packaged builds
+const userDataPath = app.getPath('userData');
+const instancesFile = path.join(userDataPath, 'instances.json');
+const instancesBaseDir = path.join(userDataPath, 'instances');
+const iconsDir = path.join(userDataPath, 'icons');
 
 function getStoredInstances() {
   if (!fs.existsSync(instancesFile)) {
@@ -36,7 +41,7 @@ app.whenReady().then(() => {
     }
   });
 
-  mainWindow.loadFile('renderer/index.html');
+  mainWindow.loadFile(path.join(__dirname, 'renderer/index.html'));
   mainWindow.setMenuBarVisibility(false);
 });
 
@@ -67,7 +72,7 @@ ipcMain.handle('get-instances', () => {
 ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   const instances = getStoredInstances();
   const folderName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const instanceDir = path.join(__dirname, 'instances', folderName);
+  const instanceDir = path.join(instancesBaseDir, folderName);
   const mcDir = path.join(instanceDir, '.minecraft');
   
   fs.mkdirSync(path.join(mcDir, 'mods'), { recursive: true });
@@ -75,7 +80,6 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
 
   let savedLogoPath = null;
   if (logoPath && fs.existsSync(logoPath)) {
-    const iconsDir = path.join(__dirname, 'icons');
     fs.mkdirSync(iconsDir, { recursive: true });
     const ext = path.extname(logoPath);
     savedLogoPath = path.join(iconsDir, `${folderName}_${Date.now()}${ext}`);
@@ -86,7 +90,7 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
     id: folderName,
     name: name,
     version: version,
-    logo: savedLogoPath ? path.relative(__dirname, savedLogoPath) : null
+    logo: savedLogoPath ? url.pathToFileURL(savedLogoPath).href : null
   };
 
   instances.push(newInstance);
@@ -95,7 +99,7 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
 });
 
 ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
-  const instancePath = path.join(__dirname, 'instances', instanceId, '.minecraft');
+  const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
 
   const opts = {
@@ -119,7 +123,7 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
 });
 
 ipcMain.on('upload-file', (event, { instanceId, filePath, targetType }) => {
-  const instancePath = path.join(__dirname, 'instances', instanceId, '.minecraft');
+  const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const targetFolder = path.join(instancePath, targetType);
   const fileName = path.basename(filePath);
   const destPath = path.join(targetFolder, fileName);
