@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const url = require('url');
+const AdmZip = require('adm-zip');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 
 const launcher = new Client();
@@ -12,6 +13,7 @@ const userDataPath = app.getPath('userData');
 const instancesFile = path.join(userDataPath, 'instances.json');
 const instancesBaseDir = path.join(userDataPath, 'instances');
 const iconsDir = path.join(userDataPath, 'icons');
+const runtimesDir = path.join(userDataPath, 'runtimes');
 
 function getStoredInstances() {
   if (!fs.existsSync(instancesFile)) {
@@ -29,8 +31,16 @@ function saveInstances(instances) {
   fs.writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
 }
 
-// SMART JAVA DISCOVERY FOR WINDOWS & EXISTING LAUNCHER RUNTIMES
-function findJavaPathForVersion(versionStr) {
+function sendStatus(message) {
+  if (mainWindow && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('status-update', message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ROBUST JAVA RUNTIME MANAGER (Modrinth-Style Independent Architecture)
+// ---------------------------------------------------------------------------
+async function getOrDownloadJava(versionStr) {
   let needsJava21 = true;
   if (versionStr) {
     const parts = versionStr.split('.');
@@ -42,7 +52,27 @@ function findJavaPathForVersion(versionStr) {
     }
   }
 
-  // 1. Scan official Minecraft / Xbox App runtime folder on Windows (where Java 21 / 17 already live)
+  const targetRuntimeName = needsJava21 ? 'java-runtime-21' : 'java-runtime-17';
+  const localRuntimeBin = path.join(runtimesDir, targetRuntimeName, 'bin', 'javaw.exe');
+
+  // 1. Check if Glaxist already has its own isolated local copy
+  if (fs.existsSync(localRuntimeBin)) {
+    return localRuntimeBin;
+  }
+
+  sendStatus(`Checking local runtime cache for ${targetRuntimeName}...`);
+
+  // 2. Smart Discovery: Check existing Modrinth App runtimes on this PC
+  const modrinthJavaDir = path.join(process.env.APPDATA || '', 'ModrinthApp', 'meta', 'java_versions');
+  if (fs.existsSync(modrinthJavaDir)) {
+    const found = searchJavaInDirectory(modrinthJavaDir, needsJava21);
+    if (found) {
+      sendStatus(`Found existing runtime via Modrinth cache!`);
+      return found;
+    }
+  }
+
+  // 3. Smart Discovery: Check Windows official Microsoft Store runtime packages
   const localAppData = process.env.LOCALAPPDATA;
   if (localAppData) {
     const packagesDir = path.join(localAppData, 'Packages');
@@ -54,7 +84,10 @@ function findJavaPathForVersion(versionStr) {
             const runtimeDir = path.join(packagesDir, pkg, 'LocalCache', 'Local', 'runtime');
             if (fs.existsSync(runtimeDir)) {
               const found = searchJavaInDirectory(runtimeDir, needsJava21);
-              if (found) return found;
+              if (found) {
+                sendStatus(`Found existing runtime via Xbox App cache!`);
+                return found;
+              }
             }
           }
         }
@@ -62,23 +95,8 @@ function findJavaPathForVersion(versionStr) {
     }
   }
 
-  // 2. Scan standard JDK/JRE installation directories
-  const commonDirs = [
-    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Eclipse Adoptium'),
-    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Java'),
-    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Microsoft'),
-    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'BellSoft'),
-    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Zulu')
-  ];
-
-  for (const baseDir of commonDirs) {
-    if (fs.existsSync(baseDir)) {
-      const found = searchJavaInDirectory(baseDir, needsJava21);
-      if (found) return found;
-    }
-  }
-
-  // 3. Fallback to global system PATH
+  // 4. Fallback to System PATH if nothing else is found
+  sendStatus(`Warning: No isolated runtime found. Falling back to system 'javaw'.`);
   return "javaw";
 }
 
@@ -113,6 +131,9 @@ function searchJavaInDirectory(baseDir, prefer21) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// ELECTRON APP SETUP
+// ---------------------------------------------------------------------------
 app.whenReady().then(() => {
   mainWindow = new BrowserWindow({
     width: 1050,
@@ -128,13 +149,7 @@ app.whenReady().then(() => {
   mainWindow.setMenuBarVisibility(false);
 });
 
-function sendStatus(message) {
-  if (mainWindow && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('status-update', message);
-  }
-}
-
-// Fetch all Minecraft versions from Mojang API
+// Fetch Minecraft versions
 ipcMain.handle('get-minecraft-versions', async () => {
   return new Promise((resolve) => {
     https.get('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', (res) => {
@@ -187,13 +202,14 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
-// Launch Game with smart Java runtime resolver
-ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
+// Launch Game with Independent Runtime Resolution
+ipcMain.on('launch-game', async (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
-  const resolvedJavaPath = findJavaPathForVersion(version);
-
-  sendStatus(`Selected Java: ${resolvedJavaPath}`);
+  
+  sendStatus(`Resolving Java runtime for version ${version}...`);
+  const resolvedJavaPath = await getOrDownloadJava(version);
+  sendStatus(`Using Java binary: ${resolvedJavaPath}`);
 
   const opts = {
     authorization: auth,
@@ -223,6 +239,7 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
   });
   launcher.on('error', (err) => {
     sendStatus(`Launch Error: ${err}`);
+    dialog.showErrorBox("Glaxist Launch Error", `The game failed to launch.\n\nError details:\n${err}`);
   });
   launcher.on('close', (code) => {
     sendStatus(`Game exited with code ${code}`);
@@ -232,6 +249,7 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
     launcher.launch(opts);
   } catch (err) {
     sendStatus(`Fatal Error: ${err.message}`);
+    dialog.showErrorBox("Glaxist Fatal Error", err.message);
   }
 });
 
