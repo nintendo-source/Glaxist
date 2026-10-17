@@ -1,16 +1,18 @@
 {
   "name": "glaxist-launcher",
   "version": "1.0.0",
+  "description": "Custom portable offline Minecraft launcher",
+  "author": "Glaxist",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win"
   },
   "dependencies": {
-    "electron": "^28.0.0",
     "minecraft-launcher-core": "^3.2.1"
   },
   "devDependencies": {
+    "electron": "^28.0.0",
     "electron-builder": "^24.9.0"
   },
   "build": {
