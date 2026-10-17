@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 
 const launcher = new Client();
@@ -37,6 +38,27 @@ app.whenReady().then(() => {
 
   mainWindow.loadFile('renderer/index.html');
   mainWindow.setMenuBarVisibility(false);
+});
+
+// Fetch all Minecraft versions from Mojang's official public API
+ipcMain.handle('get-minecraft-versions', async () => {
+  return new Promise((resolve) => {
+    https.get('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          // Returns array of versions (id, type, etc.)
+          resolve(parsed.versions);
+        } catch (e) {
+          resolve([]);
+        }
+      });
+    }).on('error', () => {
+      resolve([]);
+    });
+  });
 });
 
 ipcMain.handle('get-instances', () => {
