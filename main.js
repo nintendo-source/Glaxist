@@ -29,40 +29,88 @@ function saveInstances(instances) {
   fs.writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
 }
 
-// UNIVERSAL JAVA AUTO-DETECTOR FOR ANY PLAYER'S PC
-function findJavaPath() {
-  // 1. Check JAVA_HOME environment variable
-  if (process.env.JAVA_HOME) {
-    const javaHomePath = path.join(process.env.JAVA_HOME, 'bin', 'javaw.exe');
-    if (fs.existsSync(javaHomePath)) return javaHomePath;
+// SMART JAVA DISCOVERY FOR WINDOWS & EXISTING LAUNCHER RUNTIMES
+function findJavaPathForVersion(versionStr) {
+  let needsJava21 = true;
+  if (versionStr) {
+    const parts = versionStr.split('.');
+    if (parts.length >= 2 && parts[0] === '1') {
+      const minor = parseInt(parts[1], 10);
+      if (minor < 20 || (minor === 20 && parts[2] && parseInt(parts[2], 10) < 5)) {
+        needsJava21 = false;
+      }
+    }
   }
 
-  // 2. Scan common Windows installation directories automatically
-  const commonDirs = [
-    "C:\\Program Files\\Eclipse Adoptium",
-    "C:\\Program Files\\Java",
-    "C:\\Program Files\\Microsoft",
-    "C:\\Program Files\\BellSoft",
-    "C:\\Program Files\\Eclipse Foundation",
-    "C:\\Program Files (x86)\\Java"
-  ];
-
-  for (const baseDir of commonDirs) {
-    if (fs.existsSync(baseDir)) {
+  // 1. Scan official Minecraft / Xbox App runtime folder on Windows (where Java 21 / 17 already live)
+  const localAppData = process.env.LOCALAPPDATA;
+  if (localAppData) {
+    const packagesDir = path.join(localAppData, 'Packages');
+    if (fs.existsSync(packagesDir)) {
       try {
-        const subFolders = fs.readdirSync(baseDir);
-        for (const folder of subFolders) {
-          const javawPath = path.join(baseDir, folder, 'bin', 'javaw.exe');
-          if (fs.existsSync(javawPath)) {
-            return javawPath;
+        const pkgs = fs.readdirSync(packagesDir);
+        for (const pkg of pkgs) {
+          if (pkg.startsWith('Microsoft.MinecraftLauncher') || pkg.startsWith('Microsoft.4297127D64EC6')) {
+            const runtimeDir = path.join(packagesDir, pkg, 'LocalCache', 'Local', 'runtime');
+            if (fs.existsSync(runtimeDir)) {
+              const found = searchJavaInDirectory(runtimeDir, needsJava21);
+              if (found) return found;
+            }
           }
         }
       } catch (e) {}
     }
   }
 
-  // 3. Fallback to global system PATH command if no folder match is found
+  // 2. Scan standard JDK/JRE installation directories
+  const commonDirs = [
+    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Eclipse Adoptium'),
+    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Java'),
+    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Microsoft'),
+    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'BellSoft'),
+    path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Zulu')
+  ];
+
+  for (const baseDir of commonDirs) {
+    if (fs.existsSync(baseDir)) {
+      const found = searchJavaInDirectory(baseDir, needsJava21);
+      if (found) return found;
+    }
+  }
+
+  // 3. Fallback to global system PATH
   return "javaw";
+}
+
+function searchJavaInDirectory(baseDir, prefer21) {
+  try {
+    const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+    entries.sort((a, b) => {
+      const nameA = a.name.toLowerCase();
+      const nameB = b.name.toLowerCase();
+      if (prefer21) {
+        if (nameA.includes('21') || nameA.includes('gamma')) return -1;
+        if (nameB.includes('21') || nameB.includes('gamma')) return 1;
+      } else {
+        if (nameA.includes('17') || nameA.includes('delta')) return -1;
+        if (nameB.includes('17') || nameB.includes('delta')) return 1;
+      }
+      return 0;
+    });
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const fullPath = path.join(baseDir, entry.name);
+        const javawPath = path.join(fullPath, 'bin', 'javaw.exe');
+        if (fs.existsSync(javawPath)) {
+          return javawPath;
+        }
+        const deeper = searchJavaInDirectory(fullPath, prefer21);
+        if (deeper) return deeper;
+      }
+    }
+  } catch (e) {}
+  return null;
 }
 
 app.whenReady().then(() => {
@@ -139,13 +187,13 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
-// Launch Game using the dynamic Java detector
+// Launch Game with smart Java runtime resolver
 ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
-  const resolvedJavaPath = findJavaPath();
+  const resolvedJavaPath = findJavaPathForVersion(version);
 
-  sendStatus(`Using Java at: ${resolvedJavaPath}`);
+  sendStatus(`Selected Java: ${resolvedJavaPath}`);
 
   const opts = {
     authorization: auth,
