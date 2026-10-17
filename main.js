@@ -44,6 +44,13 @@ app.whenReady().then(() => {
   mainWindow.setMenuBarVisibility(false);
 });
 
+// Safe status sender to prevent window destruction crashes
+function sendStatus(message) {
+  if (mainWindow && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('status-update', message);
+  }
+}
+
 // Fetch all Minecraft versions from Mojang API
 ipcMain.handle('get-minecraft-versions', async () => {
   return new Promise((resolve) => {
@@ -97,7 +104,7 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
-// Launch Game with Detailed Progress Events
+// Launch Game with Safe Global Status Broadcaster
 ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
@@ -115,26 +122,28 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
     }
   };
 
-  // Attach progress listeners before launching
-  launcher.on('debug', (e) => event.sender.send('status-update', `[Debug] ${e}`));
-  launcher.on('data', (e) => event.sender.send('status-update', `[Game] ${e}`));
+  // Clear previous listeners to prevent stacking
+  launcher.removeAllListeners();
+
+  launcher.on('debug', (e) => sendStatus(`[Debug] ${e}`));
+  launcher.on('data', (e) => sendStatus(`[Game] ${e}`));
   launcher.on('progress', (e) => {
-    const percentage = Math.round((e.task / e.total) * 100);
-    event.sender.send('status-update', `Downloading ${e.type}: ${percentage}% (${e.task}/${e.total})`);
+    const percentage = e.total > 0 ? Math.round((e.task / e.total) * 100) : 0;
+    sendStatus(`Downloading ${e.type}: ${percentage}% (${e.task}/${e.total})`);
   });
   launcher.on('download-status', (e) => {
-    const percentage = Math.round((e.current / e.total) * 100);
-    event.sender.send('status-update', `Downloading ${e.type}: ${percentage}%`);
+    const percentage = e.total > 0 ? Math.round((e.current / e.total) * 100) : 0;
+    sendStatus(`Downloading ${e.type}: ${percentage}%`);
   });
 
   launcher.on('close', (code) => {
-    event.sender.send('status-update', `Game closed with code ${code}`);
+    sendStatus(`Game closed with code ${code}`);
   });
 
   try {
     launcher.launch(opts);
   } catch (err) {
-    event.sender.send('status-update', `Error: ${err.message}`);
+    sendStatus(`Error: ${err.message}`);
   }
 });
 
