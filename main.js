@@ -8,7 +8,6 @@ const { Client, Authenticator } = require('minecraft-launcher-core');
 const launcher = new Client();
 let mainWindow;
 
-// Use app.getPath('userData') so it writes safely in portable/packaged builds
 const userDataPath = app.getPath('userData');
 const instancesFile = path.join(userDataPath, 'instances.json');
 const instancesBaseDir = path.join(userDataPath, 'instances');
@@ -45,7 +44,7 @@ app.whenReady().then(() => {
   mainWindow.setMenuBarVisibility(false);
 });
 
-// Fetch all Minecraft versions from Mojang's official public API
+// Fetch all Minecraft versions from Mojang API
 ipcMain.handle('get-minecraft-versions', async () => {
   return new Promise((resolve) => {
     https.get('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', (res) => {
@@ -98,6 +97,7 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
+// Launch Game with Detailed Progress Events
 ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
@@ -115,11 +115,27 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
     }
   };
 
-  launcher.launch(opts);
+  // Attach progress listeners before launching
+  launcher.on('debug', (e) => event.sender.send('status-update', `[Debug] ${e}`));
+  launcher.on('data', (e) => event.sender.send('status-update', `[Game] ${e}`));
+  launcher.on('progress', (e) => {
+    const percentage = Math.round((e.task / e.total) * 100);
+    event.sender.send('status-update', `Downloading ${e.type}: ${percentage}% (${e.task}/${e.total})`);
+  });
+  launcher.on('download-status', (e) => {
+    const percentage = Math.round((e.current / e.total) * 100);
+    event.sender.send('status-update', `Downloading ${e.type}: ${percentage}%`);
+  });
 
-  launcher.on('debug', (e) => event.sender.send('log', e));
-  launcher.on('data', (e) => event.sender.send('log', e));
-  launcher.on('progress', (e) => event.sender.send('progress', e));
+  launcher.on('close', (code) => {
+    event.sender.send('status-update', `Game closed with code ${code}`);
+  });
+
+  try {
+    launcher.launch(opts);
+  } catch (err) {
+    event.sender.send('status-update', `Error: ${err.message}`);
+  }
 });
 
 ipcMain.on('upload-file', (event, { instanceId, filePath, targetType }) => {
