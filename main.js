@@ -44,7 +44,6 @@ app.whenReady().then(() => {
   mainWindow.setMenuBarVisibility(false);
 });
 
-// Safe status sender to prevent window destruction crashes
 function sendStatus(message) {
   if (mainWindow && !mainWindow.webContents.isDestroyed()) {
     mainWindow.webContents.send('status-update', message);
@@ -104,7 +103,7 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
-// Launch Game with Safe Global Status Broadcaster
+// Launch Game with Java 21 support and detailed logging
 ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
@@ -120,9 +119,10 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
       max: "4G",
       min: "2G"
     }
+    // Uncomment and point to your javaw.exe if Exit Code 1 persists:
+    // javaPath: "C:\\Program Files\\Eclipse Adoptium\\jdk-21.x.x.x-hotspot\\bin\\javaw.exe"
   };
 
-  // Clear previous listeners to prevent stacking
   launcher.removeAllListeners();
 
   launcher.on('debug', (e) => sendStatus(`[Debug] ${e}`));
@@ -135,15 +135,17 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
     const percentage = e.total > 0 ? Math.round((e.current / e.total) * 100) : 0;
     sendStatus(`Downloading ${e.type}: ${percentage}%`);
   });
-
+  launcher.on('error', (err) => {
+    sendStatus(`Launch Error: ${err}`);
+  });
   launcher.on('close', (code) => {
-    sendStatus(`Game closed with code ${code}`);
+    sendStatus(`Game exited with code ${code}`);
   });
 
   try {
     launcher.launch(opts);
   } catch (err) {
-    sendStatus(`Error: ${err.message}`);
+    sendStatus(`Fatal Error: ${err.message}`);
   }
 });
 
