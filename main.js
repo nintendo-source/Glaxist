@@ -49,7 +49,6 @@ ipcMain.handle('get-minecraft-versions', async () => {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          // Returns array of versions (id, type, etc.)
           resolve(parsed.versions);
         } catch (e) {
           resolve([]);
