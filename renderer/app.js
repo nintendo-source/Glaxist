@@ -32,7 +32,7 @@ async function loadVersionList() {
       });
     }
   } catch (e) {
-    console.log("Using default fallback versions.");
+    console.log("Using fallback versions.");
   }
 }
 
@@ -171,13 +171,19 @@ launchBtn.addEventListener('click', () => {
   }
 
   const activeInst = instances.find(i => i.id === selectedInstanceId);
-  statusText.innerText = `Launching [${activeInst.name}] as [${username}]...`;
+  statusText.innerText = `Starting launch for [${activeInst.name}]...`;
 
   ipcRenderer.send('launch-game', {
     username: username,
     instanceId: selectedInstanceId,
     version: activeInst.version
   });
+});
+
+// Update status text dynamically from backend events
+ipcRenderer.on('status-update', (event, message) => {
+  statusText.innerText = message;
+  console.log(message);
 });
 
 document.getElementById('upload-btn').addEventListener('click', () => {
@@ -201,7 +207,6 @@ document.getElementById('upload-btn').addEventListener('click', () => {
   });
 });
 
-ipcRenderer.on('log', (event, data) => console.log(data));
 ipcRenderer.on('upload-success', (event, msg) => {
   alert(msg);
   statusText.innerText = msg;
