@@ -29,6 +29,42 @@ function saveInstances(instances) {
   fs.writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
 }
 
+// UNIVERSAL JAVA AUTO-DETECTOR FOR ANY PLAYER'S PC
+function findJavaPath() {
+  // 1. Check JAVA_HOME environment variable
+  if (process.env.JAVA_HOME) {
+    const javaHomePath = path.join(process.env.JAVA_HOME, 'bin', 'javaw.exe');
+    if (fs.existsSync(javaHomePath)) return javaHomePath;
+  }
+
+  // 2. Scan common Windows installation directories automatically
+  const commonDirs = [
+    "C:\\Program Files\\Eclipse Adoptium",
+    "C:\\Program Files\\Java",
+    "C:\\Program Files\\Microsoft",
+    "C:\\Program Files\\BellSoft",
+    "C:\\Program Files\\Eclipse Foundation",
+    "C:\\Program Files (x86)\\Java"
+  ];
+
+  for (const baseDir of commonDirs) {
+    if (fs.existsSync(baseDir)) {
+      try {
+        const subFolders = fs.readdirSync(baseDir);
+        for (const folder of subFolders) {
+          const javawPath = path.join(baseDir, folder, 'bin', 'javaw.exe');
+          if (fs.existsSync(javawPath)) {
+            return javawPath;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 3. Fallback to global system PATH command if no folder match is found
+  return "javaw";
+}
+
 app.whenReady().then(() => {
   mainWindow = new BrowserWindow({
     width: 1050,
@@ -103,10 +139,13 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
-// Launch Game with Java 21 support and detailed logging
+// Launch Game using the dynamic Java detector
 ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
+  const resolvedJavaPath = findJavaPath();
+
+  sendStatus(`Using Java at: ${resolvedJavaPath}`);
 
   const opts = {
     authorization: auth,
@@ -118,9 +157,8 @@ ipcMain.on('launch-game', (event, { username, instanceId, version }) => {
     memory: {
       max: "4G",
       min: "2G"
-    }
-    // Uncomment and point to your javaw.exe if Exit Code 1 persists:
-    // javaPath: "C:\\Program Files\\Eclipse Adoptium\\jdk-21.x.x.x-hotspot\\bin\\javaw.exe"
+    },
+    javaPath: resolvedJavaPath
   };
 
   launcher.removeAllListeners();
