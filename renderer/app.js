@@ -19,28 +19,30 @@ navItems.forEach(item => {
 
 async function loadVersionList() {
   const versionSelect = document.getElementById('modal-version');
-  versionSelect.innerHTML = '<option value="">Fetching all versions...</option>';
-
-  const versions = await ipcRenderer.invoke('get-minecraft-versions');
-  versionSelect.innerHTML = '';
-
-  if (versions.length === 0) {
-    versionSelect.innerHTML = '<option value="1.20.1">1.20.1 (Fallback)</option>';
-    return;
+  try {
+    const versions = await ipcRenderer.invoke('get-minecraft-versions');
+    if (versions && versions.length > 0) {
+      versionSelect.innerHTML = '';
+      versions.forEach(ver => {
+        const opt = document.createElement('option');
+        opt.value = ver.id;
+        opt.textContent = `${ver.id} (${ver.type.toUpperCase()})`;
+        if (ver.id === "1.20.1") opt.selected = true;
+        versionSelect.appendChild(opt);
+      });
+    }
+  } catch (e) {
+    console.log("Using default fallback versions due to network state.");
   }
-
-  versions.forEach(ver => {
-    const opt = document.createElement('option');
-    opt.value = ver.id;
-    opt.textContent = `${ver.id} (${ver.type.toUpperCase()})`;
-    if (ver.id === "1.20.1") opt.selected = true;
-    versionSelect.appendChild(opt);
-  });
 }
 
 async function loadInstances() {
-  instances = await ipcRenderer.invoke('get-instances');
-  renderInstances();
+  try {
+    instances = await ipcRenderer.invoke('get-instances');
+    renderInstances();
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function renderInstances() {
@@ -50,7 +52,7 @@ function renderInstances() {
   grid.innerHTML = '';
   targetSelect.innerHTML = '';
 
-  if (instances.length === 0) {
+  if (!instances || instances.length === 0) {
     grid.innerHTML = `<div class="empty-state">No instances found. Click "+ New Instance" above to create one!</div>`;
     selectedInstanceId = null;
     document.getElementById('launch-btn').disabled = true;
@@ -115,26 +117,34 @@ modalLogoInput.addEventListener('change', (e) => {
 });
 
 document.getElementById('modal-create').addEventListener('click', async () => {
-  const name = document.getElementById('modal-name').value.trim();
-  const version = document.getElementById('modal-version').value;
-  const logoFile = modalLogoInput.files[0];
+  try {
+    const name = document.getElementById('modal-name').value.trim();
+    const version = document.getElementById('modal-version').value;
+    const logoFile = modalLogoInput.files[0];
 
-  if (!name) {
-    alert("Please enter an instance name!");
-    return;
+    if (!name) {
+      alert("Please enter an instance name!");
+      return;
+    }
+    if (!version) {
+      alert("Please select a Minecraft version!");
+      return;
+    }
+
+    const logoPath = logoFile ? logoFile.path : null;
+    const newInst = await ipcRenderer.invoke('create-instance', { name, version, logoPath });
+    
+    modal.classList.remove('active');
+    document.getElementById('modal-name').value = '';
+    modalLogoInput.value = '';
+    logoLabel.innerText = 'Choose PNG logo...';
+    logoLabel.style.color = '#9ca3af';
+
+    selectedInstanceId = newInst.id;
+    loadInstances();
+  } catch (err) {
+    alert("Failed to create instance: " + err.message);
   }
-
-  const logoPath = logoFile ? logoFile.path : null;
-  const newInst = await ipcRenderer.invoke('create-instance', { name, version, logoPath });
-  
-  modal.classList.remove('active');
-  document.getElementById('modal-name').value = '';
-  modalLogoInput.value = '';
-  logoLabel.innerText = 'Choose PNG logo...';
-  logoLabel.style.color = '#9ca3af';
-
-  selectedInstanceId = newInst.id;
-  loadInstances();
 });
 
 const fileInput = document.getElementById('file-input');
