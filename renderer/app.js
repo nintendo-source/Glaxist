@@ -32,7 +32,7 @@ async function loadVersionList() {
       });
     }
   } catch (e) {
-    console.log("Using default fallback versions due to network state.");
+    console.log("Using default fallback versions.");
   }
 }
 
@@ -70,7 +70,7 @@ function renderInstances() {
 
     let iconHTML = `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
     if (inst.logo) {
-      iconHTML = `<img src="../${inst.logo}" alt="logo">`;
+      iconHTML = `<img src="${inst.logo}" alt="logo">`;
     }
 
     card.innerHTML = `
