@@ -17,6 +17,27 @@ navItems.forEach(item => {
   });
 });
 
+async function loadVersionList() {
+  const versionSelect = document.getElementById('modal-version');
+  versionSelect.innerHTML = '<option value="">Fetching all versions...</option>';
+
+  const versions = await ipcRenderer.invoke('get-minecraft-versions');
+  versionSelect.innerHTML = '';
+
+  if (versions.length === 0) {
+    versionSelect.innerHTML = '<option value="1.20.1">1.20.1 (Fallback)</option>';
+    return;
+  }
+
+  versions.forEach(ver => {
+    const opt = document.createElement('option');
+    opt.value = ver.id;
+    opt.textContent = `${ver.id} (${ver.type.toUpperCase()})`;
+    if (ver.id === "1.20.1") opt.selected = true;
+    versionSelect.appendChild(opt);
+  });
+}
+
 async function loadInstances() {
   instances = await ipcRenderer.invoke('get-instances');
   renderInstances();
@@ -179,4 +200,5 @@ ipcRenderer.on('upload-success', (event, msg) => {
   fileLabel.style.color = "#9ca3af";
 });
 
+loadVersionList();
 loadInstances();
