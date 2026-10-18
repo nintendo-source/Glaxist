@@ -12,6 +12,18 @@ const userDataPath = app.getPath('userData');
 const instancesFile = path.join(userDataPath, 'instances.json');
 const instancesBaseDir = path.join(userDataPath, 'instances');
 const iconsDir = path.join(userDataPath, 'icons');
+const logFile = path.join(userDataPath, 'launcher_debug.log');
+
+function logDebug(message) {
+  const timestamp = new Date().toISOString();
+  const logMessage = `[${timestamp}] ${message}\n`;
+  try {
+    fs.appendFileSync(logFile, logMessage);
+  } catch (e) {}
+  if (mainWindow && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('status-update', message);
+  }
+}
 
 function getStoredInstances() {
   if (!fs.existsSync(instancesFile)) {
@@ -29,87 +41,52 @@ function saveInstances(instances) {
   fs.writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
 }
 
-function sendStatus(message) {
-  if (mainWindow && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('status-update', message);
-  }
-}
-
-// SMART JAVA RUNTIME DISCOVERY (Using existing local caches)
+// BULLETPROOF JAVA 21 RESOLVER DIRECTLY TARGETING MODRINTH
 async function getOrDownloadJava(versionStr) {
-  let needsJava21 = true;
-  if (versionStr) {
-    const parts = versionStr.split('.');
-    if (parts.length >= 2 && parts[0] === '1') {
-      const minor = parseInt(parts[1], 10);
-      if (minor < 20 || (minor === 20 && parts[2] && parseInt(parts[2], 10) < 5)) {
-        needsJava21 = false;
-      }
-    }
+  logDebug(`Resolving Java runtime for version: ${versionStr}`);
+
+  // 1. Direct path to the exact Modrinth Zulu Java 21 folder we found on your PC
+  const directModrinthJava21 = path.join(
+    process.env.APPDATA || '', 
+    'ModrinthApp', 
+    'meta', 
+    'java_versions', 
+    'zulu21.52.203-ca-jre21.0.12.1-win_x64', 
+    'bin', 
+    'javaw.exe'
+  );
+
+  if (fs.existsSync(directModrinthJava21)) {
+    logDebug(`SUCCESS: Found exact Modrinth Java 21 at -> ${directModrinthJava21}`);
+    return directModrinthJava21;
   }
 
-  sendStatus(`Scanning for compatible Java runtime...`);
-
-  // 1. Check Modrinth App cache on this PC
+  // 2. Fallback: Search inside Modrinth meta folder recursively
   const modrinthJavaDir = path.join(process.env.APPDATA || '', 'ModrinthApp', 'meta', 'java_versions');
   if (fs.existsSync(modrinthJavaDir)) {
-    const found = searchJavaInDirectory(modrinthJavaDir, needsJava21);
+    const found = searchJavaInDirectory(modrinthJavaDir, true);
     if (found) {
-      sendStatus(`Found Java via Modrinth cache!`);
+      logDebug(`SUCCESS: Found Java via Modrinth search at -> ${found}`);
       return found;
     }
   }
 
-  // 2. Check Windows Xbox App runtime packages
-  const localAppData = process.env.LOCALAPPDATA;
-  if (localAppData) {
-    const packagesDir = path.join(localAppData, 'Packages');
-    if (fs.existsSync(packagesDir)) {
-      try {
-        const pkgs = fs.readdirSync(packagesDir);
-        for (const pkg of pkgs) {
-          if (pkg.startsWith('Microsoft.MinecraftLauncher') || pkg.startsWith('Microsoft.4297127D64EC6')) {
-            const runtimeDir = path.join(packagesDir, pkg, 'LocalCache', 'Local', 'runtime');
-            if (fs.existsSync(runtimeDir)) {
-              const found = searchJavaInDirectory(runtimeDir, needsJava21);
-              if (found) {
-                sendStatus(`Found Java via Xbox App cache!`);
-                return found;
-              }
-            }
-          }
-        }
-      } catch (e) {}
-    }
-  }
-
   // 3. Fallback to System PATH
-  sendStatus(`Falling back to system 'javaw'.`);
+  logDebug(`WARNING: No Java 21 found in Modrinth. Falling back to system 'javaw'.`);
   return "javaw";
 }
 
 function searchJavaInDirectory(baseDir, prefer21) {
   try {
     const entries = fs.readdirSync(baseDir, { withFileTypes: true });
-    entries.sort((a, b) => {
-      const nameA = a.name.toLowerCase();
-      const nameB = b.name.toLowerCase();
-      if (prefer21) {
-        if (nameA.includes('21') || nameA.includes('gamma')) return -1;
-        if (nameB.includes('21') || nameB.includes('gamma')) return 1;
-      } else {
-        if (nameA.includes('17') || nameA.includes('delta')) return -1;
-        if (nameB.includes('17') || nameB.includes('delta')) return 1;
-      }
-      return 0;
-    });
-
     for (const entry of entries) {
       if (entry.isDirectory()) {
         const fullPath = path.join(baseDir, entry.name);
         const javawPath = path.join(fullPath, 'bin', 'javaw.exe');
         if (fs.existsSync(javawPath)) {
-          return javawPath;
+          if (prefer21 && fullPath.toLowerCase().includes('21')) {
+            return javawPath;
+          }
         }
         const deeper = searchJavaInDirectory(fullPath, prefer21);
         if (deeper) return deeper;
@@ -193,7 +170,7 @@ ipcMain.on('launch-game', async (event, { username, instanceId, version }) => {
   const auth = Authenticator.getAuth(username);
   
   const resolvedJavaPath = await getOrDownloadJava(version);
-  sendStatus(`Using Java binary: ${resolvedJavaPath}`);
+  logDebug(`Final Selected Java Path: ${resolvedJavaPath}`);
 
   const opts = {
     authorization: auth,
@@ -211,28 +188,28 @@ ipcMain.on('launch-game', async (event, { username, instanceId, version }) => {
 
   launcher.removeAllListeners();
 
-  launcher.on('debug', (e) => sendStatus(`[Debug] ${e}`));
-  launcher.on('data', (e) => sendStatus(`[Game] ${e}`));
+  launcher.on('debug', (e) => logDebug(`[Debug] ${e}`));
+  launcher.on('data', (e) => logDebug(`[Game] ${e}`));
   launcher.on('progress', (e) => {
     const percentage = e.total > 0 ? Math.round((e.task / e.total) * 100) : 0;
-    sendStatus(`Downloading ${e.type}: ${percentage}% (${e.task}/${e.total})`);
+    logDebug(`Downloading ${e.type}: ${percentage}%`);
   });
   launcher.on('download-status', (e) => {
     const percentage = e.total > 0 ? Math.round((e.current / e.total) * 100) : 0;
-    sendStatus(`Downloading ${e.type}: ${percentage}%`);
+    logDebug(`Downloading ${e.type}: ${percentage}%`);
   });
   launcher.on('error', (err) => {
-    sendStatus(`Launch Error: ${err}`);
+    logDebug(`Launch Error: ${err}`);
     dialog.showErrorBox("Glaxist Launch Error", `The game failed to launch.\n\nError details:\n${err}`);
   });
   launcher.on('close', (code) => {
-    sendStatus(`Game exited with code ${code}`);
+    logDebug(`Game exited with code ${code}`);
   });
 
   try {
     launcher.launch(opts);
   } catch (err) {
-    sendStatus(`Fatal Error: ${err.message}`);
+    logDebug(`Fatal Error: ${err.message}`);
     dialog.showErrorBox("Glaxist Fatal Error", err.message);
   }
 });
