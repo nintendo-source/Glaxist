@@ -41,42 +41,43 @@ function saveInstances(instances) {
   fs.writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
 }
 
-// BULLETPROOF JAVA 21 RESOLVER DIRECTLY TARGETING MODRINTH
+// INTELLIGENT MULTI-JAVA VERSION ROUTER (Java 17, 21, and 25)
 async function getOrDownloadJava(versionStr) {
-  logDebug(`Resolving Java runtime for version: ${versionStr}`);
+  let targetJavaMajor = 21; // Default for modern 1.21+
 
-  // 1. Direct path to the exact Modrinth Zulu Java 21 folder we found on your PC
-  const directModrinthJava21 = path.join(
-    process.env.APPDATA || '', 
-    'ModrinthApp', 
-    'meta', 
-    'java_versions', 
-    'zulu21.52.203-ca-jre21.0.12.1-win_x64', 
-    'bin', 
-    'javaw.exe'
-  );
-
-  if (fs.existsSync(directModrinthJava21)) {
-    logDebug(`SUCCESS: Found exact Modrinth Java 21 at -> ${directModrinthJava21}`);
-    return directModrinthJava21;
+  if (versionStr) {
+    const parts = versionStr.split('.');
+    // If it's a version starting with 26 or higher (like 26.3)
+    if (parts.length > 0 && parseInt(parts[0], 10) >= 26) {
+      targetJavaMajor = 25;
+    } 
+    // Older versions like 1.20.4 or below use Java 17
+    else if (parts.length >= 2 && parts[0] === '1') {
+      const minor = parseInt(parts[1], 10);
+      if (minor < 20 || (minor === 20 && parts[2] && parseInt(parts[2], 10) < 5)) {
+        targetJavaMajor = 17;
+      }
+    }
   }
 
-  // 2. Fallback: Search inside Modrinth meta folder recursively
+  logDebug(`Target Java version for ${versionStr}: Java ${targetJavaMajor}`);
+
+  // Scan Modrinth App cache for the exact required Java major version
   const modrinthJavaDir = path.join(process.env.APPDATA || '', 'ModrinthApp', 'meta', 'java_versions');
   if (fs.existsSync(modrinthJavaDir)) {
-    const found = searchJavaInDirectory(modrinthJavaDir, true);
+    const found = searchJavaByMajorVersion(modrinthJavaDir, targetJavaMajor);
     if (found) {
-      logDebug(`SUCCESS: Found Java via Modrinth search at -> ${found}`);
+      logDebug(`SUCCESS: Found Java ${targetJavaMajor} via Modrinth cache at -> ${found}`);
       return found;
     }
   }
 
-  // 3. Fallback to System PATH
-  logDebug(`WARNING: No Java 21 found in Modrinth. Falling back to system 'javaw'.`);
+  // Fallback to System PATH if the specific version isn't in Modrinth
+  logDebug(`WARNING: Java ${targetJavaMajor} not found in cache. Falling back to system 'javaw'.`);
   return "javaw";
 }
 
-function searchJavaInDirectory(baseDir, prefer21) {
+function searchJavaByMajorVersion(baseDir, targetMajor) {
   try {
     const entries = fs.readdirSync(baseDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -84,11 +85,11 @@ function searchJavaInDirectory(baseDir, prefer21) {
         const fullPath = path.join(baseDir, entry.name);
         const javawPath = path.join(fullPath, 'bin', 'javaw.exe');
         if (fs.existsSync(javawPath)) {
-          if (prefer21 && fullPath.toLowerCase().includes('21')) {
+          if (fullPath.includes(`zulu${targetMajor}`) || fullPath.includes(`jre${targetMajor}`) || fullPath.includes(`java-${targetMajor}`)) {
             return javawPath;
           }
         }
-        const deeper = searchJavaInDirectory(fullPath, prefer21);
+        const deeper = searchJavaByMajorVersion(fullPath, targetMajor);
         if (deeper) return deeper;
       }
     }
