@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const url = require('url');
-const AdmZip = require('adm-zip');
 const { Client, Authenticator } = require('minecraft-launcher-core');
 
 const launcher = new Client();
@@ -13,7 +12,6 @@ const userDataPath = app.getPath('userData');
 const instancesFile = path.join(userDataPath, 'instances.json');
 const instancesBaseDir = path.join(userDataPath, 'instances');
 const iconsDir = path.join(userDataPath, 'icons');
-const runtimesDir = path.join(userDataPath, 'runtimes');
 
 function getStoredInstances() {
   if (!fs.existsSync(instancesFile)) {
@@ -37,9 +35,7 @@ function sendStatus(message) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// ROBUST JAVA RUNTIME MANAGER (Modrinth-Style Independent Architecture)
-// ---------------------------------------------------------------------------
+// SMART JAVA RUNTIME DISCOVERY (Using existing local caches)
 async function getOrDownloadJava(versionStr) {
   let needsJava21 = true;
   if (versionStr) {
@@ -52,27 +48,19 @@ async function getOrDownloadJava(versionStr) {
     }
   }
 
-  const targetRuntimeName = needsJava21 ? 'java-runtime-21' : 'java-runtime-17';
-  const localRuntimeBin = path.join(runtimesDir, targetRuntimeName, 'bin', 'javaw.exe');
+  sendStatus(`Scanning for compatible Java runtime...`);
 
-  // 1. Check if Glaxist already has its own isolated local copy
-  if (fs.existsSync(localRuntimeBin)) {
-    return localRuntimeBin;
-  }
-
-  sendStatus(`Checking local runtime cache for ${targetRuntimeName}...`);
-
-  // 2. Smart Discovery: Check existing Modrinth App runtimes on this PC
+  // 1. Check Modrinth App cache on this PC
   const modrinthJavaDir = path.join(process.env.APPDATA || '', 'ModrinthApp', 'meta', 'java_versions');
   if (fs.existsSync(modrinthJavaDir)) {
     const found = searchJavaInDirectory(modrinthJavaDir, needsJava21);
     if (found) {
-      sendStatus(`Found existing runtime via Modrinth cache!`);
+      sendStatus(`Found Java via Modrinth cache!`);
       return found;
     }
   }
 
-  // 3. Smart Discovery: Check Windows official Microsoft Store runtime packages
+  // 2. Check Windows Xbox App runtime packages
   const localAppData = process.env.LOCALAPPDATA;
   if (localAppData) {
     const packagesDir = path.join(localAppData, 'Packages');
@@ -85,7 +73,7 @@ async function getOrDownloadJava(versionStr) {
             if (fs.existsSync(runtimeDir)) {
               const found = searchJavaInDirectory(runtimeDir, needsJava21);
               if (found) {
-                sendStatus(`Found existing runtime via Xbox App cache!`);
+                sendStatus(`Found Java via Xbox App cache!`);
                 return found;
               }
             }
@@ -95,8 +83,8 @@ async function getOrDownloadJava(versionStr) {
     }
   }
 
-  // 4. Fallback to System PATH if nothing else is found
-  sendStatus(`Warning: No isolated runtime found. Falling back to system 'javaw'.`);
+  // 3. Fallback to System PATH
+  sendStatus(`Falling back to system 'javaw'.`);
   return "javaw";
 }
 
@@ -131,9 +119,6 @@ function searchJavaInDirectory(baseDir, prefer21) {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// ELECTRON APP SETUP
-// ---------------------------------------------------------------------------
 app.whenReady().then(() => {
   mainWindow = new BrowserWindow({
     width: 1050,
@@ -202,12 +187,11 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
   return newInstance;
 });
 
-// Launch Game with Independent Runtime Resolution
+// Launch Game
 ipcMain.on('launch-game', async (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
   const auth = Authenticator.getAuth(username);
   
-  sendStatus(`Resolving Java runtime for version ${version}...`);
   const resolvedJavaPath = await getOrDownloadJava(version);
   sendStatus(`Using Java binary: ${resolvedJavaPath}`);
 
@@ -265,4 +249,4 @@ ipcMain.on('upload-file', (event, { instanceId, filePath, targetType }) => {
   } catch (err) {
     event.sender.send('upload-success', `Error: ${err.message}`);
   }
-});
+});s
