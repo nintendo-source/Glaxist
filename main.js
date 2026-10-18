@@ -3,7 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const url = require('url');
-const { Client, Authenticator } = require('minecraft-launcher-core');
+const crypto = require('crypto');
+const { Client } = require('minecraft-launcher-core');
 
 const launcher = new Client();
 let mainWindow;
@@ -41,17 +42,29 @@ function saveInstances(instances) {
   fs.writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
 }
 
+// ROBUST OFFLINE AUTHENTICATOR (Prevents "Invalid session" on cracked/offline servers)
+function getOfflineAuth(username) {
+  const hash = crypto.createHash('md5').update('OfflinePlayer:' + username).digest('hex');
+  const uuid = `${hash.substr(0,8)}-${hash.substr(8,4)}-${hash.substr(12,4)}-${hash.substr(16,4)}-${hash.substr(20,12)}`;
+  
+  return {
+    access_token: 'glaxist_offline_token_' + Date.now(),
+    client_token: 'glaxist_client_' + Date.now(),
+    uuid: uuid,
+    name: username,
+    user_type: 'legacy'
+  };
+}
+
 // INTELLIGENT MULTI-JAVA VERSION ROUTER (Java 17, 21, and 25)
 async function getOrDownloadJava(versionStr) {
   let targetJavaMajor = 21; // Default for modern 1.21+
 
   if (versionStr) {
     const parts = versionStr.split('.');
-    // If it's a version starting with 26 or higher (like 26.3)
     if (parts.length > 0 && parseInt(parts[0], 10) >= 26) {
       targetJavaMajor = 25;
     } 
-    // Older versions like 1.20.4 or below use Java 17
     else if (parts.length >= 2 && parts[0] === '1') {
       const minor = parseInt(parts[1], 10);
       if (minor < 20 || (minor === 20 && parts[2] && parseInt(parts[2], 10) < 5)) {
@@ -168,7 +181,9 @@ ipcMain.handle('create-instance', (event, { name, version, logoPath }) => {
 // Launch Game
 ipcMain.on('launch-game', async (event, { username, instanceId, version }) => {
   const instancePath = path.join(instancesBaseDir, instanceId, '.minecraft');
-  const auth = Authenticator.getAuth(username);
+  
+  // Generate valid offline session auth to support cracked/offline servers smoothly
+  const auth = getOfflineAuth(username || 'GlaxistPlayer');
   
   const resolvedJavaPath = await getOrDownloadJava(version);
   logDebug(`Final Selected Java Path: ${resolvedJavaPath}`);
