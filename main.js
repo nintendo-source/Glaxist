@@ -249,4 +249,4 @@ ipcMain.on('upload-file', (event, { instanceId, filePath, targetType }) => {
   } catch (err) {
     event.sender.send('upload-success', `Error: ${err.message}`);
   }
-});s
+});
